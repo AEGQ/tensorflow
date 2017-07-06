@@ -69,12 +69,43 @@ string MessageTypeToString(RdmaMessageType rmt) {
 ibv_context* open_default_device() {
   ibv_device** dev_list;
   ibv_device* ib_dev;
-  dev_list = ibv_get_device_list(NULL);
+  ibv_context* context;
+  ibv_port_attr port_attr;
+  int ib_dev_count;
+  int ib_dev_num;
+  
+  dev_list = ibv_get_device_list(&ib_dev_count);
   CHECK(dev_list) << "No InfiniBand device found";
-  ib_dev = dev_list[0];
-  CHECK(ib_dev) << "No InfiniBand device found";
-  ibv_context* context = ibv_open_device(ib_dev);
-  CHECK(context) << "Open context failed for " << ibv_get_device_name(ib_dev);
+
+  //open specified device by environment variable
+  const char* ib_env_num = getenv("IB_DEV_NUM");
+  if(ib_env_num != nullptr && strcmp(ib_env_num, "") != 0 && strings::safe_strto32(ib_env_num, &ib_dev_num)){
+    ib_dev = dev_list[ib_dev_num];
+    CHECK(ib_dev) << "No InfiniBand device found";
+    ibv_context* context = ibv_open_device(ib_dev);
+    CHECK(context) << "Open context failed for " << ibv_get_device_name(ib_dev);
+    CHECK(!ibv_query_port(context,i,&port_attr));
+    if(port_attr.state == IBV_PORT_ACTIVE){
+      return context;
+    }
+  }
+
+  //open first usable device by default
+  for (int i = 1; i <= ib_dev_count; i++) {
+      ib_dev = dev_list[i-1];
+      CHECK(ib_dev) << "No InfiniBand device found";
+      context = ibv_open_device(ib_dev);
+      CHECK(context) << "Open context failed for " << ibv_get_device_name(ib_dev);
+      CHECK(!ibv_query_port(context,i,&port_attr));
+      if(port_attr.state == IBV_PORT_ACTIVE){
+          LOG(INFO)<< "ib_dev_count: "<< ib_dev_count 
+                   << " cur_device: " << ibv_get_device_name(ib_dev) 
+                   << " cur_state: " << ibv_port_state_str(port_attr.state);
+          break;
+      }
+      if (i==ib_dev_count) LOG(FATAL) << "No InfiniBand device available";
+  }
+
   return context;
 }
 
